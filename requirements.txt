@@ -1,0 +1,11 @@
+torch
+torchvision
+matplotlib
+numpy
+pandas
+Pillow
+scikit-learn
+torch_geometric
+timm
+transformers
+ftfy

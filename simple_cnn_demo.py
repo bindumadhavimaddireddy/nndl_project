@@ -253,10 +253,18 @@ class Trainer():
 
 
 # In[14]:
-
+import argparse
 
 # Init model and trainer
-device = 'cpu'
+parser = argparse.ArgumentParser()
+parser.add_argument('--device', default='cpu', help="Device to run on: 'cpu' or 'cuda'")
+args = parser.parse_args()
+device = args.device
+
+print("----device------", device)
+
+# Init model and trainer
+# device = 'cpu'
 model = CNN(input_size=64).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=1e-3)

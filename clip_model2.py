@@ -376,14 +376,14 @@ criterion_sub = LogitAdjustmentLoss(sub_freq)
 import argparse
 
 # Init model and trainer
-# parser = argparse.ArgumentParser()
-# parser.add_argument('--device', default='cpu', help="Device to run on: 'cpu' or 'cuda'")
-# args = parser.parse_args()
-# device = args.device
+parser = argparse.ArgumentParser()
+parser.add_argument('--device', default='cpu', help="Device to run on: 'cpu' or 'cuda'")
+args = parser.parse_args()
+device = args.device
 
-# print("----device------", device)
+print("----device------", device)
 
-device = 'cpu'
+# device = 'cpu'
 model = CLIPAdapterModel().to(device)
 criterion = nn.CrossEntropyLoss()
 criterion_super = LogitAdjustmentLoss(super_freq)

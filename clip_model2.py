@@ -125,8 +125,6 @@ train_mask = ~((train_ann_df['superclass_index'] == pseudo_novel_superclass) |
 pseudo_val_mask = ((train_ann_df['superclass_index'] == pseudo_novel_superclass) |
                    (train_ann_df['subclass_index'] == pseudo_novel_subclass))
 
-# train_subset_df = train_ann_df[train_mask]
-# val_subset_df = train_ann_df[pseudo_val_mask]
 
 train_subset_df = train_ann_df[train_mask].reset_index(drop=True)
 val_subset_df = train_ann_df[pseudo_val_mask].reset_index(drop=True)
@@ -135,13 +133,6 @@ val_subset_df = train_ann_df[pseudo_val_mask].reset_index(drop=True)
 train_dataset = MultiClassImageDataset(train_subset_df, super_map_df, sub_map_df, train_img_dir, transform=clip_transform_train)
 val_dataset = MultiClassImageDataset(val_subset_df, super_map_df, sub_map_df, train_img_dir, transform=clip_transform_test)
 
-# Recreate dataloaders
-# train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-# val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-
-# # Create train and val split
-# train_dataset = MultiClassImageDataset(train_ann_df, super_map_df, sub_map_df, train_img_dir, transform=clip_transform_train)
-# train_dataset, val_dataset = random_split(train_dataset, [0.9, 0.1]) 
 
 # Create test dataset
 test_dataset = MultiClassImageTestDataset(super_map_df, sub_map_df, test_img_dir, transform=clip_transform_test)
@@ -164,10 +155,16 @@ test_loader = DataLoader(test_dataset,
 # In[108]:
 
 
-def detect_novel_class(logits, threshold=1.0, novel_index=3):
+def detect_novel_class_entropy(logits, energy_threshold=2.5, entropy_threshold=1.8, novel_index=3):
     energy = torch.logsumexp(logits, dim=1)
+    probs = F.softmax(logits, dim=1)
+    entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=1)
+    
     _, predicted_labels = torch.max(logits, dim=1)
-    predicted_labels[energy < threshold] = novel_index
+
+    # Combine energy and entropy thresholds
+    novel_flags = (energy < energy_threshold) | (entropy > entropy_threshold)
+    predicted_labels[novel_flags] = novel_index
     return predicted_labels
 
 
@@ -191,8 +188,8 @@ def tune_energy_threshold(model, val_loader, min_t=0.5, max_t=3.0, step=0.1, dev
 
                     super_logits, sub_logits = model(images)
 
-                    super_preds = detect_novel_class(super_logits, threshold=t_super, novel_index=3)
-                    sub_preds = detect_novel_class(sub_logits, threshold=t_sub, novel_index=87)
+                    super_preds = detect_novel_class_entropy(super_logits, threshold=t_super, novel_index=3)
+                    sub_preds = detect_novel_class_entropy(sub_logits, threshold=t_sub, novel_index=87)
 
                     unseen_mask = super_labels == 3  # ground truth novel superclass
                     unseen_correct += (super_preds[unseen_mask] == super_labels[unseen_mask]).sum().item()
@@ -300,8 +297,8 @@ class CLIPTrainer:
 
                 super_outputs, sub_outputs = self.model(images)
                 
-                super_preds = detect_novel_class(super_outputs, energy_threshold_super, novel_index=3)
-                sub_preds = detect_novel_class(sub_outputs, energy_threshold_sub, novel_index=87)
+                super_preds = detect_novel_class_entropy(super_outputs, energy_threshold_super, novel_index=3)
+                sub_preds = detect_novel_class_entropy(sub_outputs, energy_threshold_sub, novel_index=87)
 
                 seen_mask = super_labels != 3
                 unseen_mask = super_labels == 3
@@ -332,8 +329,8 @@ class CLIPTrainer:
                 images, img_names = data[0].to(self.device), data[1]
                 super_outputs, sub_outputs = self.model(images)
 
-                super_preds = detect_novel_class(super_outputs, energy_threshold_super, novel_index=3)
-                sub_preds = detect_novel_class(sub_outputs, energy_threshold_sub, novel_index=87)
+                super_preds = detect_novel_class_entropy(super_outputs, energy_threshold_super, novel_index=3)
+                sub_preds = detect_novel_class_entropy(sub_outputs, energy_threshold_sub, novel_index=87)
 
                 test_predictions['image'].append(img_names[0])
                 test_predictions['superclass_index'].append(super_preds.item())
@@ -392,48 +389,6 @@ optimizer = optim.Adam(model.parameters(), lr=1e-3)
 trainer = CLIPTrainer(model, criterion, optimizer, train_loader, val_loader, test_loader, device=device)
 
 
-# In[115]:
-
-
-# Training loop
-# for epoch in range(1):
-#     print(f'Epoch {epoch+1}')
-#     trainer.train_epoch()
-#     trainer.validate_epoch(energy_threshold_super=6.5, energy_threshold_sub=7.5)
-
-#     print('')
-
-# print('Finished Training')
-
-# Train loop
-for epoch in range(20):
-    print(f"Epoch {epoch + 1}")
-    trainer.train_epoch()
-    trainer.validate_epoch(energy_threshold_super=6.5, energy_threshold_sub=7.5)
-
-# Tune thresholds after training
-print("Tuning energy thresholds...")
-best_threshold_super, best_threshold_sub = tune_energy_threshold(model, val_loader, device=device)
-
-# Final validation with best thresholds
-print("Validation with best thresholds:")
-trainer.validate_epoch(best_threshold_super, best_threshold_sub)
-
-# Final test prediction with best thresholds
-print("Test Prediction with best thresholds:")
-test_predictions = trainer.test(save_to_csv=True,
-                                return_predictions=True,
-                                energy_threshold_super=best_threshold_super,
-                                energy_threshold_sub=best_threshold_sub)
-
-
-# In[ ]:
-
-
-# test_predictions = trainer.test(save_to_csv=True, return_predictions=True)
-# print("\nTest predictions saved to test_predictions.csv")
-
-
 # In[ ]:
 
 
@@ -452,14 +407,23 @@ plt.ylabel("Frequency")
 plt.show()
 
 
+# In[115]:
+
+
+# Training loop
+for epoch in range(20):
+    print(f'Epoch {epoch+1}')
+    trainer.train_epoch()
+    trainer.validate_epoch(energy_threshold_super=6.5, energy_threshold_sub=7.5)
+
+    print('')
+
+print('Finished Training')
+
+
 # In[ ]:
 
 
-
-
-
-# In[ ]:
-
-
-
+test_predictions = trainer.test(save_to_csv=True, return_predictions=True, energy_threshold_super=6.5, energy_threshold_sub=7.5)
+print("\nTest predictions saved to test_predictions.csv")
 
